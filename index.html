@@ -22,6 +22,7 @@
         .txt-explicacao { font-size: 0.7rem; color: #64748b; line-height: 1.3; margin-top: 4px; display: block; font-weight: 400; }
         .valor-destaque { color: #1e293b; font-weight: 800; font-size: 1.1rem; display: block; }
         .total-lote-txt { font-size: 10px; color: #475569; font-weight: bold; background: #f1f5f9; padding: 2px 6px; border-radius: 4px; display: inline-block; margin-top: 4px; }
+        .btn-toggle.active { background: #001f3f; color: white; border-color: #001f3f; font-weight: bold; }
         .btn-categoria { padding: 6px; border-radius: 8px; border: 1px solid #e2e8f0; font-size: 9px; font-weight: bold; background: #f1f5f9; flex: 1; text-align: center; }
     </style>
 </head>
@@ -289,28 +290,106 @@
         function gerarPDF() {
             const { jsPDF } = window.jspdf;
             const doc = new jsPDF('p', 'pt', 'a4');
-            doc.setFontSize(16);
-            doc.text("GESTOR ÁXON - RELATÓRIO DE DIVISÃO DE LUCROS", 40, 50);
-            doc.setFontSize(10);
-            doc.text(`PRODUTO: ${d.nome.toUpperCase()} | QUANTIDADE: ${d.qtd} UNIDADES`, 40, 70);
+            const fmt = formatarMoeda;
 
+            // 1. Puxando os valores originais informados na tela
+            const v_aluguel = parseValor('v_aluguel');
+            const v_luz = parseValor('v_luz');
+            const v_internet = parseValor('v_internet');
+            const v_sacolas = parseValor('v_sacolas');
+            const v_salarios = (parseFloat(document.getElementById('qtd_func').value) || 0) * parseValor('sal_func');
+            const v_prolabore = parseValor('v_prolabore');
+            
+            const total_fixos = v_aluguel + v_luz + v_internet + v_sacolas + v_salarios + v_prolabore;
+            
+            // Calcula a proporção individual de cada conta no rateio do lote
+            const calcFatiaLote = (valorConta) => {
+                if (total_fixos === 0) return 0;
+                return (valorConta / total_fixos) * (d.contasLote / 1.10); 
+            };
+
+            // Isola a margem de segurança de 10% adicionada no cálculo operacional
+            const margem_seguranca_10 = d.contasLote - (d.contasLote / 1.10);
+
+            // Separação proporcional de Taxas bancárias/impostos vs Fundo de Reserva
+            const p_taxas = parsePercent('v_taxas');
+            const p_reserva = parsePercent('v_reserva');
+            const total_prot_perc = p_taxas + p_reserva;
+            const calcProt = (perc) => {
+                if (total_prot_perc === 0) return 0;
+                return (perc / total_prot_perc) * d.protecaoLote;
+            };
+
+            // Cabeçalho de Identidade visual da planilha
+            doc.setFont("helvetica", "bold");
+            doc.setFontSize(14);
+            doc.setTextColor(30, 41, 59);
+            doc.text("GESTOR ÁXON - PLANILHA DE RATEIO E DIVISÃO DE LUCROS", 40, 45);
+            
+            doc.setFontSize(9);
+            doc.setFont("helvetica", "normal");
+            doc.setTextColor(100, 116, 139);
+            doc.text(`PRODUTO: ${d.nome.toUpperCase()} | QUANTIDADE DO LOTE: ${d.qtd} UNIDADES | EMISSÃO: ${new Date().toLocaleDateString('pt-BR')}`, 40, 62);
+
+            // Montagem das Linhas do Excel (Somando e discriminando cada conta individualmente)
+            let linhasPlanilha = [
+                ['1. Reposição de Estoque (Custo Base)', fmt(d.custoUnid), fmt(d.custoLote), 'Fornecedor (Mercadoria)']
+            ];
+
+            if (v_aluguel > 0) linhasPlanilha.push(['2. Rateio Operacional: Aluguel', fmt(calcFatiaLote(v_aluguel)/d.qtd), fmt(calcFatiaLote(v_aluguel)), 'Caixa da Loja (Estrutura)']);
+            if (v_luz > 0) linhasPlanilha.push(['3. Rateio Operacional: Luz / Água', fmt(calcFatiaLote(v_luz)/d.qtd), fmt(calcFatiaLote(v_luz)), 'Caixa da Loja (Consumo)']);
+            if (v_internet > 0) linhasPlanilha.push(['4. Rateio Operacional: Internet', fmt(calcFatiaLote(v_internet)/d.qtd), fmt(calcFatiaLote(v_internet)), 'Caixa da Loja (Sistemas)']);
+            if (v_sacolas > 0) linhasPlanilha.push(['5. Rateio Operacional: Embalagens', fmt(calcFatiaLote(v_sacolas)/d.qtd), fmt(calcFatiaLote(v_sacolas)), 'Caixa da Loja (Sacolas)']);
+            if (v_salarios > 0) linhasPlanilha.push(['6. Rateio Operacional: Funcionários', fmt(calcFatiaLote(v_salarios)/d.qtd), fmt(calcFatiaLote(v_salarios)), 'Folha de Pagamento']);
+            if (v_prolabore > 0) linhasPlanilha.push(['7. Retirada Fixa: Pró-Labore do Dono', fmt(calcFatiaLote(v_prolabore)/d.qtd), fmt(calcFatiaLote(v_prolabore)), 'Salário do Proprietário']);
+            if (margem_seguranca_10 > 0) linhasPlanilha.push(['8. Margem de Segurança Operacional (+10%)', fmt(margem_seguranca_10/d.qtd), fmt(margem_seguranca_10), 'Fundo de Caixa da Loja']);
+            
+            linhasPlanilha.push(['9. Proteção Comercial: Taxas e Impostos', fmt(calcProt(p_taxas)/d.qtd), fmt(calcProt(p_taxas)), 'Administradora / Governo']);
+            linhasPlanilha.push(['10. Proteção Comercial: Reserva Própria', fmt(calcProt(p_reserva)/d.qtd), fmt(calcProt(p_reserva)), 'Cofre da Empresa']);
+            linhasPlanilha.push(['11. RETORNO LÍQUIDO: LUCRO REAL LIMPO', fmt(d.lucroUnid), fmt(d.lucroLote), 'SEU BOLSO (DINHEIRO LIVRE)']);
+
+            // Renderização da tabela com bordas totais idênticas às grades do Excel
             doc.autoTable({
-                startY: 90,
-                head: [['DESCRIÇÃO DO CUSTO', 'VALOR UNITÁRIO', 'VALOR DO LOTE', 'DESTINO DO DINHEIRO']],
-                body: [
-                    ['Reposição de Estoque', formatarMoeda(d.custoUnid), formatarMoeda(d.custoLote), 'Fornecedor'],
-                    ['Contas Fixas da Loja', formatarMoeda(d.contasUnid), formatarMoeda(d.contasLote), 'Caixa da Loja (Luz/Aluguel)'],
-                    ['Banco, Governo e Reserva', formatarMoeda(d.protecaoUnid), formatarMoeda(d.protecaoLote), 'Taxas de Cartão e Cofre'],
-                    ['LUCRO REAL LIMPO', formatarMoeda(d.lucroUnid), formatarMoeda(d.lucroLote), 'SEU BOLSO (DINHEIRO LIVRE)']
-                ],
+                startY: 80,
+                head: [['DESCRIÇÃO DO ITEM / CONTA', 'VALOR UNITÁRIO', 'VALOR DO LOTE', 'DESTINO DO DINHEIRO']],
+                body: linhasPlanilha,
+                foot: [['VALOR TOTAL DE VENDA (PREÇO DE GÔNDOLA)', fmt(d.vVendaUnid), fmt(d.vVendaLote), 'ENTRADA DE CAIXA BRUTA']],
                 theme: 'grid',
-                headStyles: { fillColor: [0, 31, 63] }
+                headStyles: { 
+                    fillColor: [234, 239, 245], 
+                    textColor: [30, 41, 59], 
+                    fontStyle: 'bold',
+                    lineColor: [180, 185, 190],
+                    lineWidth: 0.5
+                },
+                bodyStyles: { 
+                    fillColor: [255, 255, 255], 
+                    textColor: [51, 65, 85],
+                    lineColor: [200, 205, 210],
+                    lineWidth: 0.5
+                },
+                footStyles: {
+                    fillColor: [220, 252, 231], // Destaque verde clássico do Excel para totais positivos
+                    textColor: [21, 128, 61],
+                    fontStyle: 'bold',
+                    lineColor: [180, 185, 190],
+                    lineWidth: 0.5
+                },
+                styles: { 
+                    fontSize: 8.5, 
+                    cellPadding: 6,
+                    font: 'helvetica'
+                },
+                columnStyles: { 
+                    0: { cellWidth: 195, halign: 'left' }, 
+                    1: { cellWidth: 90, halign: 'right' }, // Alinhamento numérico à direita
+                    2: { cellWidth: 90, halign: 'right' }, // Alinhamento numérico à direita
+                    3: { cellWidth: 140, halign: 'left' } 
+                }
             });
 
-            doc.setFontSize(12);
-            doc.text(`PREÇO DE VENDA UNITÁRIO SUGERIDO: ${formatarMoeda(d.vVendaUnid)}`, 40, doc.lastAutoTable.finalY + 40);
-            doc.text(`VALOR TOTAL QUE DEVE ENTRAR NO CAIXA: ${formatarMoeda(d.vVendaLote)}`, 40, doc.lastAutoTable.finalY + 60);
-            doc.save(`Relatorio_Axon_${d.nome}.pdf`);
+            // Nome do arquivo gerado de forma limpa baseado no nome do produto
+            doc.save(`Planilha_Axon_${d.nome.replace(/\s+/g, '_')}.pdf`);
         }
 
         function zerarEspio() { document.getElementById('v_vizinho').value = ''; document.getElementById('e_nome').value = ''; document.getElementById('res-espio').classList.add('hidden'); }
